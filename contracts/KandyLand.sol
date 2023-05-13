@@ -1,64 +1,72 @@
-/// @title KandyLand Official Token
-/// @author @jupiter229
-/// @notice ERC20 token with 2% BUY and 3% SELL taxes, and 1% acquisitions/marketing, 3% liquidity, and 1% dev/team fees
-
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.9;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
+import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 
-contract KandyLand is ERC20, Ownable {
-    uint256 private constant MAX = ~uint256(0);
-    uint256 private constant _totalSupply = 1000000000 * 10 ** 18; // 1 billion tokens
-    uint256 private _tFeeTotal;
+contract KandyLand is ERC20, Ownable, ReentrancyGuard {
+    using SafeMath for uint256;
+    using Address for address;
 
-    uint256 public buyTax = 2;
-    uint256 public sellTax = 3;
-    uint256 public acquisitionMarketingFee = 1;
-    uint256 public liquidityFee = 3;
-    uint256 public devTeamFee = 1;
+    uint256 private constant TOTAL_SUPPLY = 1_000_000_000 * 10 ** 18;
 
-    constructor() ERC20("KandyLand", "KL") {
-        _mint(msg.sender, _totalSupply);
-    }
+    uint256 public constant BUY_TAX = 2;
+    uint256 public constant SELL_TAX = 3;
+    uint256 public constant ACQUISITIONS_MARKETING_TAX = 1;
+    uint256 public constant LIQUIDITY_TAX = 3;
+    uint256 public constant DEV_TEAM_TAX = 1;
 
-    function totalSupply() public pure override returns (uint256) {
-        return _totalSupply;
-    }
+    address public acquisitionsMarketingReceiver;
+    address public liquidityReceiver;
+    address public devTeamReceiver;
 
-    function decimals() public pure override returns (uint8) {
-        return 18;
-    }
+    IUniswapV2Router02 public immutable uniswapV2Router;
+    IUniswapV2Pair public pairContract;
 
-    function getOwner() public view returns (address) {
-        return owner();
-    }
+    address public uniswapV2Pair;
 
-    function balanceOf(address account) public view override returns (uint256) {
-        return super.balanceOf(account);
+    constructor(
+        address _router,
+        address _acquisitionsMarketingReceiver,
+        address _liquidityReceiver,
+        address _devTeamReceiver
+    ) ERC20("KandyLand", "KL") {
+        _mint(_msgSender(), TOTAL_SUPPLY);
+
+        uniswapV2Router = IUniswapV2Router02(_router);
+
+        address _uniswapV2Pair = IUniswapV2Factory(uniswapV2Router.factory())
+            .createPair(address(this), uniswapV2Router.WETH());
+        pairContract = IUniswapV2Pair(_uniswapV2Pair);
+
+        acquisitionsMarketingReceiver = _acquisitionsMarketingReceiver;
+        liquidityReceiver = _liquidityReceiver;
+        devTeamReceiver = _devTeamReceiver;
     }
 
     function transfer(
         address recipient,
         uint256 amount
     ) public override returns (bool) {
-        _transfer(_msgSender(), recipient, amount);
-        return true;
-    }
+        uint256 tax = calculateTax(amount, SELL_TAX);
+        uint256 netAmount = amount.sub(tax);
+        uint256 marketingTax = calculateTax(amount, ACQUISITIONS_MARKETING_TAX);
+        uint256 liquidityTax = calculateTax(amount, LIQUIDITY_TAX);
+        uint256 devTeamTax = calculateTax(amount, DEV_TEAM_TAX);
 
-    function allowance(
-        address owner,
-        address spender
-    ) public view override returns (uint256) {
-        return super.allowance(owner, spender);
-    }
+        _transfer(_msgSender(), recipient, netAmount);
+        _transfer(
+            _msgSender(),
+            owner(),
+            marketingTax.add(liquidityTax).add(devTeamTax)
+        );
 
-    function approve(
-        address spender,
-        uint256 amount
-    ) public override returns (bool) {
-        _approve(_msgSender(), spender, amount);
         return true;
     }
 
@@ -67,124 +75,75 @@ contract KandyLand is ERC20, Ownable {
         address recipient,
         uint256 amount
     ) public override returns (bool) {
+        uint256 netAmount = takeFee(sender, recipient, amount);
+
+        _transfer(sender, recipient, netAmount);
         _approve(
             sender,
             _msgSender(),
-            _allowances[sender][_msgSender()] - amount
+            allowance(sender, _msgSender()).sub(
+                amount,
+                "ERC20: transfer amount exceeds allowance"
+            )
         );
-        _transfer(sender, recipient, amount);
+
         return true;
     }
 
-    function excludeFromFee(address account) public onlyOwner {
-        // TODO: implement if needed
-    }
-
-    function includeInFee(address account) public onlyOwner {
-        // TODO: implement if needed
-    }
-
-    function setTaxRates(
-        uint256 _buyTax,
-        uint256 _sellTax,
-        uint256 _acquisitionMarketingFee,
-        uint256 _liquidityFee,
-        uint256 _devTeamFee
-    ) public onlyOwner {
-        buyTax = _buyTax;
-        sellTax = _sellTax;
-        acquisitionMarketingFee = _acquisitionMarketingFee;
-        liquidityFee = _liquidityFee;
-        devTeamFee = _devTeamFee;
-    }
-
-    function _transfer(
+    function takeFee(
         address sender,
         address recipient,
         uint256 amount
-    ) internal {
-        require(sender != address(0), "transfer from the zero address");
-        require(recipient != address(0), "transfer to the zero address");
-        require(amount > 0, "transfer amount must be greater than zero");
-
-        uint256 transferAmount = amount;
-        uint256 totalTax = 0;
-
-        if (sender == owner()) {
-            totalTax = buyTax;
-        } else {
-            totalTax = sellTax;
+    ) internal returns (uint256) {
+        uint256 _sellOrBuyTax;
+        if (sender == address(pairContract)) {
+            _sellOrBuyTax = calculateTax(amount, BUY_TAX);
+        } else if (recipient == address(pairContract)) {
+            _sellOrBuyTax = calculateTax(amount, SELL_TAX);
         }
 
-        uint256 acquisitionMarketingAmount = (amount *
-            acquisitionMarketingFee) / 100;
-        uint256 liquidityAmount = (amount * liquidityFee) / 100;
-        uint256 devTeamAmount = (amount * devTeamFee) / 100;
-        uint256 taxAmount = (amount * totalTax) / 100;
-        uint256 tokensToTransfer = amount -
-            acquisitionMarketingAmount -
-            liquidityAmount -
-            devTeamAmount -
-            taxAmount;
-        require(
-            tokensToTransfer > 0,
-            "transfer amount after fees must be greater than zero"
+        uint256 _marketingTax = calculateTax(
+            amount,
+            ACQUISITIONS_MARKETING_TAX
         );
+        uint256 _liquidityTax = calculateTax(amount, LIQUIDITY_TAX);
+        uint256 _devTeamTax = calculateTax(amount, DEV_TEAM_TAX);
 
-        if (totalTax > 0) {
-            _takeTax(sender, taxAmount, totalTax);
-        }
+        uint256 _netAmount = amount
+            .sub(_sellOrBuyTax)
+            .sub(_marketingTax)
+            .sub(_liquidityTax)
+            .sub(_devTeamTax);
 
-        _transfer(sender, address(this), acquisitionMarketingAmount);
-        _transfer(sender, address(this), liquidityAmount);
+        _transfer(sender, acquisitionsMarketingReceiver, _marketingTax);
+        _transfer(sender, liquidityReceiver, _liquidityTax);
+        _transfer(sender, devTeamReceiver, _devTeamTax);
 
-        if (devTeamAmount > 0) {
-            _transfer(sender, address(this), devTeamAmount);
-            _transfer(address(this), owner(), devTeamAmount);
-        }
-
-        _transfer(sender, recipient, tokensToTransfer);
+        return _netAmount;
     }
 
-    function _takeTax(
-        address sender,
-        uint256 taxAmount,
-        uint256 totalTax
-    ) internal {
-        if (totalTax == buyTax) {
-            _transfer(sender, address(this), taxAmount);
-            _tFeeTotal += taxAmount;
-        } else if (totalTax == sellTax) {
-            uint256 liquidityAmount = taxAmount / 2;
-            _transfer(sender, address(this), liquidityAmount);
-            _tFeeTotal += liquidityAmount;
-        }
+    function calculateTax(
+        uint256 amount,
+        uint256 taxPercentage
+    ) internal returns (uint256) {
+        return amount.mul(taxPercentage).div(100);
     }
 
-    function getTotalTaxFees() public view returns (uint256) {
-        return _tFeeTotal;
-    }
+    function addLiquidity(
+        uint256 tokenAmount,
+        uint256 ethAmount
+    ) external onlyOwner nonReentrant {
+        _approve(address(this), address(uniswapV2Router), tokenAmount);
 
-    function withdrawTokens(
-        address tokenAddress,
-        address recipient,
-        uint256 amount
-    ) public onlyOwner {
-        require(
-            tokenAddress != address(this),
-            "cannot withdraw KandyLand tokens"
+        uniswapV2Router.addLiquidityETH{value: ethAmount}(
+            address(this),
+            tokenAmount,
+            0,
+            0,
+            owner(),
+            block.timestamp
         );
-        IERC20(tokenAddress).transfer(recipient, amount);
     }
 
-    function withdrawETH(
-        address payable recipient,
-        uint256 amount
-    ) public onlyOwner {
-        recipient.transfer(amount);
-    }
-
-    function renounceOwnership() public override onlyOwner {
-        revert("renouncing ownership is not allowed");
-    }
+    receive() external payable {}
 }
