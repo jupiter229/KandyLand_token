@@ -51,30 +51,27 @@ contract KandyLand is ERC20, Ownable, ReentrancyGuard {
     }
 
     function transfer(
-        address recipient,
-        uint256 amount
-    ) public override returns (bool) {
-        uint256 tax = calculateTax(amount, SELL_TAX);
-        uint256 netAmount = amount.sub(tax);
-        uint256 marketingTax = calculateTax(amount, ACQUISITIONS_MARKETING_TAX);
-        uint256 liquidityTax = calculateTax(amount, LIQUIDITY_TAX);
-        uint256 devTeamTax = calculateTax(amount, DEV_TEAM_TAX);
-
-        _transfer(_msgSender(), recipient, netAmount);
-        _transfer(
-            _msgSender(),
-            owner(),
-            marketingTax.add(liquidityTax).add(devTeamTax)
-        );
-
+        address to,
+        uint256 value
+    ) external override returns (bool) {
+        _transferFrom(msg.sender, to, value);
         return true;
     }
 
     function transferFrom(
+        address from,
+        address to,
+        uint256 value
+    ) external override returns (bool) {
+        _transferFrom(from, to, value);
+        return true;
+    }
+
+    function _transferFrom(
         address sender,
         address recipient,
         uint256 amount
-    ) public override returns (bool) {
+    ) internal returns (bool) {
         uint256 netAmount = takeFee(sender, recipient, amount);
 
         _transfer(sender, recipient, netAmount);
