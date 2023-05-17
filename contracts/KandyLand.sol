@@ -67,16 +67,19 @@ contract KandyLand is ERC20, Ownable {
         swapping = false;
     }
 
-    constructor() ERC20("KandyLand", "KL") {
+    constructor(
+        address payable marketingWallet,
+        address payable devWallet
+    ) ERC20("KandyLand", "KL") {
         buyFee = Fee({marketingShare: 200, liquidityShare: 600, devShare: 200});
-        totalBuyFee = 30;
+        totalBuyFee = 20;
 
         sellFee = Fee({
             marketingShare: 200,
             liquidityShare: 600,
             devShare: 200
         });
-        totalSellFee = 20;
+        totalSellFee = 30;
 
         IUniswapV2Router02 _router = IUniswapV2Router02(
             0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
@@ -98,6 +101,8 @@ contract KandyLand is ERC20, Ownable {
 
         swapEnabled = true;
 
+        _marketingWallet = marketingWallet;
+        _devWallet = devWallet;
         /*
             _mint is an internal function in ERC20.sol that is only called here,
             and CANNOT be called ever again

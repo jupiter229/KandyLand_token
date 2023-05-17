@@ -19,7 +19,7 @@ const config: HardhatUserConfig = {
     apiKey: `${ETHERSCAN_API_KEY}`,
   },
   solidity: {
-    version: "0.8.17",
+    version: "0.8.18",
     settings: {
       optimizer: {
         enabled: true,
