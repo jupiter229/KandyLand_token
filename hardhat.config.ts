@@ -10,6 +10,12 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
     },
+    mainnet: {
+      accounts: [`0x${PRIVATE_KEY}`],
+      chainId: 1,
+      url: `https://eth-mainnet.alchemyapi.io/v2/${ALCHEMY_API_KEY}`,
+      timeout: 200000,
+    },
     goerli: {
       url: `${API_URL}/${ALCHEMY_API_KEY}`,
       accounts: [`0x${PRIVATE_KEY}`]
@@ -19,7 +25,7 @@ const config: HardhatUserConfig = {
     apiKey: `${ETHERSCAN_API_KEY}`,
   },
   solidity: {
-    version: "0.8.18",
+    version: "0.8.11",
     settings: {
       optimizer: {
         enabled: true,
